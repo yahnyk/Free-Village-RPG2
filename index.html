@@ -4,19 +4,29 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Free Village RPG — 1838–1900</title>
-<meta name="description" content="A browser-based educational RPG set in post-emancipation Jamaica. Walk the village, farm the land, survive history.">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <div id="game-container"></div>
+<div id="error-box" style="display:none; position:fixed; top:10px; left:10px; background:#300; color:#fff; padding:15px; font-family:monospace; z-index:9999; max-width:90vw; white-space:pre-wrap; border:2px solid #f00;"></div>
 
-<!-- Phaser 3 from CDN -->
+<script>
+// Global error display so GitHub Pages failures are visible
+window.onerror = function(msg, url, line, col, err){
+  const box = document.getElementById('error-box');
+  box.style.display = 'block';
+  box.textContent = 'ERROR: ' + msg + '\nLine ' + line + (col ? ':' + col : '') + '\n' + (err && err.stack ? err.stack : '');
+};
+</script>
+
+<!-- Phaser 3.60 from CDN -->
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
 
 <!-- Game modules -->
 <script src="js/data.js"></script>
 <script src="js/state.js"></script>
 <script src="js/scenes/BootScene.js"></script>
+<script src="js/scenes/TitleScene.js"></script>
 <script src="js/scenes/VillageScene.js"></script>
 <script src="js/scenes/UIScene.js"></script>
 <script src="js/main.js"></script>

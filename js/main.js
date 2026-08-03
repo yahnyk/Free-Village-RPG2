@@ -3,7 +3,7 @@
    Phaser game configuration and bootstrap.
    ============================================================ */
 
-const config = {
+var config = {
   type: Phaser.AUTO,
   parent: 'game-container',
   width: 960,
@@ -17,11 +17,11 @@ const config = {
       debug: false
     }
   },
-  scene: [BootScene, VillageScene, UIScene],
+  scene: [BootScene, TitleScene, VillageScene, UIScene],
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH
   }
 };
 
-const game = new Phaser.Game(config);
+var game = new Phaser.Game(config);
