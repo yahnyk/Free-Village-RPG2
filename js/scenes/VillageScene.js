@@ -1,6 +1,7 @@
 /* ============================================================
    VILLAGESCENE.JS
-   Main RPG scene: walking, farming, NPCs, weather, buildings.
+   The main RPG scene: walking, farming, talking, weather,
+   day/night, and year-end resolution.
    ============================================================ */
 
 class VillageScene extends Phaser.Scene {
@@ -11,50 +12,54 @@ class VillageScene extends Phaser.Scene {
   }
 
   create(){
+    // Init or load state
     if(this.continued){
       GameState.load();
     } else {
-      // Already initialized by TitleScene
+      GameState.init('river','Free Village');
     }
 
-    this.mapW = MAP_WIDTH * TILE_SIZE;
-    this.mapH = MAP_HEIGHT * TILE_SIZE;
-    this.physics.world.setBounds(0, 0, this.mapW, this.mapH);
+    this.mapWidth = MAP_WIDTH * TILE_SIZE;
+    this.mapHeight = MAP_HEIGHT * TILE_SIZE;
 
-    // Ground layer
-    this.groundGroup = this.add.group();
-    this.buildingGroup = this.physics.add.staticGroup();
-    this.treeGroup = this.physics.add.staticGroup();
+    // --- WORLD BOUNDS ---
+    this.physics.world.setBounds(0, 0, this.mapWidth, this.mapHeight);
+
+    // --- GROUND LAYER ---
+    this.ground = this.add.group();
+    this.buildings = this.add.group();
+    this.trees = this.add.group();
     this.farmSprites = {};
 
     this.generateMap();
 
-    // Player
+    // --- PLAYER ---
     this.player = this.physics.add.sprite(GameState.playerX, GameState.playerY, 'player');
     this.player.setCollideWorldBounds(true);
     this.player.setDepth(10);
     this.player.body.setSize(20, 20);
 
-    // NPCs
+    // --- NPCs ---
     this.npcSprites = {};
-    var self = this;
-    GameState.villagers.forEach(function(v, i){
+    GameState.villagers.forEach((v, i) => {
       if(!v.alive) return;
-      var spr = self.physics.add.sprite(v.x, v.y, 'npc' + (i % 9));
-      spr.setCollideWorldBounds(true);
-      spr.setDepth(9);
-      spr.body.setSize(20, 20);
-      spr.setData('villager', v);
-      self.npcSprites[v.id] = spr;
-      if(v.sick) spr.setTint(0xFF6666);
+      const sprite = this.physics.add.sprite(v.x, v.y, 'npc' + (i % 9));
+      sprite.setCollideWorldBounds(true);
+      sprite.setDepth(9);
+      sprite.body.setSize(20, 20);
+      sprite.setData('villager', v);
+      this.npcSprites[v.id] = sprite;
+
+      // If sick, tint red
+      if(v.sick) sprite.setTint(0xFF6666);
     });
 
-    // Camera
-    this.cameras.main.setBounds(0, 0, this.mapW, this.mapH);
+    // --- CAMERA ---
+    this.cameras.main.setBounds(0, 0, this.mapWidth, this.mapHeight);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
     this.cameras.main.setZoom(1.2);
 
-    // Controls
+    // --- CONTROLS ---
     this.cursors = this.input.keyboard.createCursorKeys();
     this.wasd = this.input.keyboard.addKeys({
       up: Phaser.Input.Keyboard.KeyCodes.W,
@@ -63,163 +68,159 @@ class VillageScene extends Phaser.Scene {
       right: Phaser.Input.Keyboard.KeyCodes.D
     });
     this.eKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+    this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
-    // Collisions
-    this.physics.add.collider(this.player, this.buildingGroup);
-    this.physics.add.collider(this.player, this.treeGroup);
-    Object.values(this.npcSprites).forEach(function(spr){
-      self.physics.add.collider(self.player, spr);
-      self.physics.add.collider(spr, self.buildingGroup);
-      self.physics.add.collider(spr, self.treeGroup);
+    // --- COLLISIONS ---
+    this.physics.add.collider(this.player, this.buildings);
+    this.physics.add.collider(this.player, this.trees);
+    Object.values(this.npcSprites).forEach(spr => {
+      this.physics.add.collider(this.player, spr);
+      this.physics.add.collider(spr, this.buildings);
+      this.physics.add.collider(spr, this.trees);
     });
 
-    // Weather emitters (created once, toggled via on/off)
-    this.rainEmitter = null;
-    this.windEmitter = null;
-    this.setupWeather();
+    // --- OVERLAYS (created first, before anything that could reference them) ---
+    this.nightOverlay = this.add.tileSprite(0, 0, this.mapWidth, this.mapHeight, 'night');
+    this.nightOverlay.setAlpha(0);
+    this.nightOverlay.setDepth(50);
+    this.nightOverlay.setScrollFactor(1);
 
-    // Overlays
-    this.nightOverlay = this.add.tileSprite(0, 0, this.mapW, this.mapH, 'night');
-    this.nightOverlay.setAlpha(0).setDepth(50).setScrollFactor(1);
-
-    this.heatOverlay = this.add.tileSprite(0, 0, this.mapW, this.mapH, 'heat');
-    this.heatOverlay.setAlpha(0).setDepth(51).setScrollFactor(1);
+    this.heatOverlay = this.add.tileSprite(0, 0, this.mapWidth, this.mapHeight, 'heat');
+    this.heatOverlay.setAlpha(0);
+    this.heatOverlay.setDepth(51);
+    this.heatOverlay.setScrollFactor(1);
     this.heatOverlay.setBlendMode(Phaser.BlendModes.MULTIPLY);
 
-    // UI Scene
-    this.scene.launch('UIScene');
-    this.ui = this.scene.get('UIScene');
-
-    // Interaction prompt
-    this.promptText = this.add.text(0, 0, '[E] Interact', {
-      fontSize:'12px', fontFamily:'Georgia', color:'#FFD700', backgroundColor:'#00000088'
-    }).setOrigin(0.5).setDepth(200).setVisible(false);
-
-    this.yearEndActive = false;
-    this.nearby = null;
-
-    // Welcome
-    if(!this.continued){
-      this.notify('Welcome to ' + GameState.village + ' — Year 1838');
-    } else {
-      this.notify('Continued — Year ' + GameState.year);
-    }
-
-    // Scripted event
-    if(GameState.scriptedEvent){
-      var ev = GameState.scriptedEvent;
-      setTimeout(function(){ self.showEvent(ev); }, 800);
-    }
-  }
-
-  setupWeather(){
-    // Rain particles — create emitter but start stopped
-    var rainConfig = {
-      x: {min: 0, max: this.mapW},
+    // --- WEATHER ---
+    this.weatherParticles = this.add.particles(0, 0, 'rain', {
+      x: {min: 0, max: this.mapWidth},
       y: -10,
       lifespan: 1200,
       speedY: {min: 300, max: 500},
       scale: {min: 0.5, max: 1},
-      quantity: 2,
-      frequency: 50,
-      blendMode: 'ADD',
-      on: false
-    };
-    this.rainEmitter = this.add.particles(0, 0, 'rain', rainConfig);
-    this.rainEmitter.setDepth(100);
+      quantity: 0,
+      blendMode: 'ADD'
+    });
+    this.weatherParticles.setDepth(100);
 
-    // Wind particles
-    var windConfig = {
+    this.windParticles = this.add.particles(0, 0, 'wind', {
       x: -10,
-      y: {min: 0, max: this.mapH},
+      y: {min: 0, max: this.mapHeight},
       lifespan: 800,
       speedX: {min: 400, max: 700},
       speedY: {min: -50, max: 50},
       scale: {min: 0.5, max: 1},
-      quantity: 3,
-      frequency: 30,
-      blendMode: 'NORMAL',
-      on: false
-    };
-    this.windEmitter = this.add.particles(0, 0, 'wind', windConfig);
-    this.windEmitter.setDepth(100);
+      quantity: 0,
+      blendMode: 'NORMAL'
+    });
+    this.windParticles.setDepth(100);
 
-    this.applyWeatherVisuals();
+    // --- UI SCENE ---
+    this.scene.launch('UIScene');
+    this.uiScene = this.scene.get('UIScene');
+
+    // --- NOTIFICATIONS ---
+    this.notifications = [];
+
+    // --- INTERACTION PROMPT ---
+    this.promptText = this.add.text(0, 0, '[E] Interact', {
+      fontSize:'12px', fontFamily:'Georgia', color:'#FFD700', backgroundColor:'#00000088'
+    }).setOrigin(0.5).setDepth(200).setVisible(false);
+
+    // --- YEAR END OVERLAY ---
+    this.yearEndActive = false;
+
+    // Welcome notification
+    if(!this.continued){
+      this.notify('Welcome to '+GameState.village+' — Year 1838');
+    } else {
+      this.notify('Continued — Year '+GameState.year);
+    }
+
+    // Scripted event check
+    if(GameState.scriptedEvent){
+      setTimeout(() => this.showEvent(GameState.scriptedEvent), 1000);
+    }
   }
 
   generateMap(){
-    var map = [];
-    for(var y = 0; y < MAP_HEIGHT; y++){
+    // Simple procedural village layout
+    const map = [];
+    for(let y=0; y<MAP_HEIGHT; y++){
       map[y] = [];
-      for(var x = 0; x < MAP_WIDTH; x++){
-        var tile = 'grass';
+      for(let x=0; x<MAP_WIDTH; x++){
+        let tile = 'grass';
+        // River at bottom
         if(y >= 35) tile = 'water';
-        else if((x >= 20 && x <= 28 && y >= 15 && y <= 25) ||
-                (x >= 8 && x <= 14 && y >= 6 && y <= 12) ||
-                (x >= 34 && x <= 40 && y >= 6 && y <= 12) ||
-                (x >= 40 && x <= 48 && y >= 18 && y <= 25) ||
-                (x >= 2 && x <= 10 && y >= 20 && y <= 28) ||
-                (y === 18 && x >= 2 && x <= 48) ||
-                (x === 24 && y >= 8 && y <= 35)){
+        // Path network
+        else if((x>=20 && x<=28 && y>=15 && y<=25) || // central square
+                (x>=8 && x<=14 && y>=6 && y<=12) || // church area
+                (x>=34 && x<=40 && y>=6 && y<=12) || // school area
+                (x>=40 && x<=48 && y>=18 && y<=25) || // market area
+                (x>=2 && x<=10 && y>=20 && y<=28) || // farm area
+                (y===18 && x>=2 && x<=48) || // main road
+                (x===24 && y>=8 && y<=35)) { // north-south road
           tile = 'dirt';
         }
-        else if(x >= 2 && x <= 9 && y >= 22 && y <= 26){
+        // Farm plots
+        else if(x>=2 && x<=9 && y>=22 && y<=26){
           tile = 'tilled';
         }
         map[y][x] = tile;
 
-        var spr = this.add.sprite(x * TILE_SIZE + 16, y * TILE_SIZE + 16, tile);
+        const spr = this.add.sprite(x*TILE_SIZE+16, y*TILE_SIZE+16, tile);
         spr.setDepth(0);
-        this.groundGroup.add(spr);
+        this.ground.add(spr);
       }
     }
 
-    // Buildings
-    var self = this;
-    Object.keys(BUILDINGS).forEach(function(key){
-      var b = BUILDINGS[key];
-      var spr = self.physics.add.sprite(
-        b.x * TILE_SIZE + b.w * TILE_SIZE / 2,
-        b.y * TILE_SIZE + b.h * TILE_SIZE / 2,
-        'bld_' + key
+    // Buildings (as physics sprites for collision)
+    Object.entries(BUILDINGS).forEach(([key,b]) => {
+      const spr = this.physics.add.sprite(
+        b.x*TILE_SIZE + b.w*TILE_SIZE/2,
+        b.y*TILE_SIZE + b.h*TILE_SIZE/2,
+        'bld_'+key
       );
       spr.body.setImmovable(true);
-      spr.body.setSize(b.w * TILE_SIZE - 8, b.h * TILE_SIZE - 8);
+      spr.body.setSize(b.w*TILE_SIZE-8, b.h*TILE_SIZE-8);
       spr.setDepth(5);
       spr.setData('building', b);
-      self.buildingGroup.add(spr);
+      this.buildings.add(spr);
     });
 
-    // Houses
-    var houses = [[18,14],[22,14],[26,14],[20,12],[24,12],[14,30],[16,32],[30,30],[32,32],[38,30]];
-    houses.forEach(function(pos){
-      var spr = self.physics.add.sprite(pos[0]*TILE_SIZE+32, pos[1]*TILE_SIZE+32, 'house');
+    // Houses scattered around
+    const housePositions = [
+      [18,14],[22,14],[26,14],[20,12],[24,12],
+      [14,30],[16,32],[30,30],[32,32],[38,30]
+    ];
+    housePositions.forEach(([hx,hy]) => {
+      const spr = this.physics.add.sprite(hx*TILE_SIZE+32, hy*TILE_SIZE+32, 'house');
       spr.body.setImmovable(true);
       spr.body.setSize(56, 56);
       spr.setDepth(5);
-      self.buildingGroup.add(spr);
+      this.buildings.add(spr);
     });
 
     // Trees
-    for(var i = 0; i < 40; i++){
-      var tx = Phaser.Math.Between(0, MAP_WIDTH-1);
-      var ty = Phaser.Math.Between(0, MAP_HEIGHT-1);
-      if(map[ty] && map[ty][tx] === 'grass'){
-        var spr = self.physics.add.sprite(tx*TILE_SIZE+16, ty*TILE_SIZE+16, 'tree');
+    for(let i=0; i<40; i++){
+      const tx = Phaser.Math.Between(0, MAP_WIDTH-1);
+      const ty = Phaser.Math.Between(0, MAP_HEIGHT-1);
+      if(map[ty][tx] === 'grass'){
+        const spr = this.physics.add.sprite(tx*TILE_SIZE+16, ty*TILE_SIZE+16, 'tree');
         spr.body.setImmovable(true);
         spr.body.setSize(20, 20);
         spr.setDepth(4);
-        self.treeGroup.add(spr);
+        this.trees.add(spr);
       }
     }
 
-    // Farm sprites
-    GameState.farmPlots.forEach(function(plot, idx){
+    // Farm plot sprites
+    GameState.farmPlots.forEach((plot, idx) => {
       if(plot.crop){
-        var stage = Math.min(3, Math.floor(plot.growth * 4));
-        var spr = self.add.sprite(plot.x*TILE_SIZE+16, plot.y*TILE_SIZE+16, 'crop'+stage);
+        const stage = Math.min(3, Math.floor(plot.growth * 4));
+        const spr = this.add.sprite(plot.x*TILE_SIZE+16, plot.y*TILE_SIZE+16, 'crop'+stage);
         spr.setDepth(3);
-        self.farmSprites[idx] = spr;
+        this.farmSprites[idx] = spr;
       }
     });
   }
@@ -227,91 +228,85 @@ class VillageScene extends Phaser.Scene {
   update(time, delta){
     if(this.yearEndActive) return;
 
-    // Time passage
-    GameState.dayTime += delta / 20000;
+    // --- TIME PASSAGE ---
+    GameState.dayTime += delta / 20000; // 20 seconds = full day
     if(GameState.dayTime >= 1){
       GameState.dayTime = 0;
       GameState.day++;
       this.onNewDay();
     }
 
-    // Day/night
-    var nightAlpha = 0;
+    // --- DAY/NIGHT ---
+    let nightAlpha = 0;
     if(GameState.dayTime < 0.2) nightAlpha = 1 - GameState.dayTime/0.2;
-    else if(GameState.dayTime > 0.8) nightAlpha = (GameState.dayTime - 0.8)/0.2;
+    else if(GameState.dayTime > 0.8) nightAlpha = (GameState.dayTime-0.8)/0.2;
     this.nightOverlay.setAlpha(nightAlpha * 0.6);
 
-    // Weather position update (follow camera)
-    this.updateWeatherPosition();
+    // --- WEATHER UPDATE ---
+    this.updateWeather(delta);
 
-    // Player movement
-    var speed = 120;
+    // --- PLAYER MOVEMENT ---
+    const speed = 120;
     this.player.body.setVelocity(0);
+
     if(this.cursors.left.isDown || this.wasd.left.isDown) this.player.body.setVelocityX(-speed);
     else if(this.cursors.right.isDown || this.wasd.right.isDown) this.player.body.setVelocityX(speed);
+
     if(this.cursors.up.isDown || this.wasd.up.isDown) this.player.body.setVelocityY(-speed);
     else if(this.cursors.down.isDown || this.wasd.down.isDown) this.player.body.setVelocityY(speed);
 
+    // Save player pos
     GameState.playerX = this.player.x;
     GameState.playerY = this.player.y;
 
-    // NPCs
+    // --- NPC AI ---
     this.updateNPCs(delta);
 
-    // Interaction
+    // --- INTERACTION CHECK ---
     this.checkInteraction();
 
-    // E key
+    // --- E KEY ---
     if(Phaser.Input.Keyboard.JustDown(this.eKey)){
       this.tryInteract();
     }
   }
 
-  updateWeatherPosition(){
-    var cam = this.cameras.main;
-    if(this.rainEmitter && GameState.weather === 'rain'){
-      this.rainEmitter.setPosition(cam.scrollX, cam.scrollY - 10);
-    }
-    if(this.windEmitter && GameState.weather === 'hurricane'){
-      this.windEmitter.setPosition(cam.scrollX - 10, cam.scrollY);
-    }
-  }
-
   onNewDay(){
-    var self = this;
     // Crop growth
-    GameState.farmPlots.forEach(function(plot, idx){
+    GameState.farmPlots.forEach((plot, idx) => {
       if(plot.crop){
-        var crop = CROPS[plot.crop];
-        var weatherMod = WEATHER_TYPES[GameState.weather].cropMod;
+        const crop = CROPS[plot.crop];
+        const weatherMod = WEATHER_TYPES[GameState.weather].cropMod;
         plot.growth += (1 / crop.growDays) * weatherMod;
-        if(self.farmSprites[idx]){
-          var stage = Math.min(3, Math.floor(plot.growth * 4));
-          self.farmSprites[idx].setTexture('crop' + stage);
+
+        // Update sprite
+        if(this.farmSprites[idx]){
+          const stage = Math.min(3, Math.floor(plot.growth * 4));
+          this.farmSprites[idx].setTexture('crop'+stage);
         }
       }
     });
 
     // Weather change
     GameState.weatherTimer++;
-    if(GameState.weatherTimer > 3 + Math.random() * 5){
+    if(GameState.weatherTimer > 3 + Math.random()*5){
       this.rollWeather();
       GameState.weatherTimer = 0;
     }
 
-    // Disease
+    // Disease spread among NPCs
     this.updateDisease();
 
-    // Auto-save
+    // Auto-save every few days
     if(GameState.day % 5 === 0){
       GameState.save();
     }
   }
 
   rollWeather(){
-    var region = REGIONS[GameState.region];
-    var roll = Math.random();
-    var newWeather = 'clear';
+    const region = REGIONS[GameState.region];
+    const roll = Math.random();
+    let newWeather = 'clear';
 
     if(roll < 0.15 * region.hurricaneMod){
       newWeather = 'hurricane';
@@ -329,42 +324,83 @@ class VillageScene extends Phaser.Scene {
   }
 
   applyWeatherVisuals(){
-    // Reset all
-    if(this.rainEmitter) this.rainEmitter.stop();
-    if(this.windEmitter) this.windEmitter.stop();
+    // Guard: bail safely if this is ever called before the scene has finished
+    // creating its weather objects, instead of throwing and killing the game.
+    if(!this.weatherParticles || !this.windParticles || !this.heatOverlay) return;
+
+    const w = WEATHER_TYPES[GameState.weather];
+
+    // Reset
+    this.weatherParticles.stop();
+    this.windParticles.stop();
     this.heatOverlay.setAlpha(0);
 
-    var w = GameState.weather;
-    if(w === 'rain' && this.rainEmitter){
-      this.rainEmitter.start();
-    } else if(w === 'hurricane' && this.windEmitter){
-      this.windEmitter.start();
+    if(w.particle === 'rain'){
+      this.weatherParticles.setConfig({
+        x: {min: this.cameras.main.scrollX, max: this.cameras.main.scrollX + this.cameras.main.width},
+        y: this.cameras.main.scrollY - 10,
+        lifespan: 1200,
+        speedY: {min: 300, max: 500},
+        scale: {min: 0.5, max: 1},
+        quantity: 50,
+        blendMode: 'ADD'
+      });
+      this.weatherParticles.start();
+    } else if(w.particle === 'wind'){
+      this.windParticles.setConfig({
+        x: this.cameras.main.scrollX - 10,
+        y: {min: this.cameras.main.scrollY, max: this.cameras.main.scrollY + this.cameras.main.height},
+        lifespan: 800,
+        speedX: {min: 400, max: 700},
+        speedY: {min: -50, max: 50},
+        scale: {min: 0.5, max: 1},
+        quantity: 80,
+        blendMode: 'NORMAL'
+      });
+      this.windParticles.start();
     }
 
-    if(w === 'drought'){
+    if(GameState.weather === 'drought'){
       this.heatOverlay.setAlpha(0.3);
     }
   }
 
-  updateNPCs(delta){
-    var isDay = GameState.dayTime > 0.2 && GameState.dayTime < 0.8;
-    var self = this;
+  updateWeather(delta){
+    // Guard: these are always created in create() before update() ever runs,
+    // but bail safely rather than crash if that assumption is ever broken.
+    if(!this.weatherParticles || !this.windParticles) return;
 
-    GameState.villagers.forEach(function(v, i){
+    // Keep particles following camera
+    if(GameState.weather === 'rain'){
+      this.weatherParticles.setConfig({
+        x: {min: this.cameras.main.scrollX, max: this.cameras.main.scrollX + this.cameras.main.width}
+      });
+    } else if(GameState.weather === 'hurricane'){
+      this.windParticles.setConfig({
+        y: {min: this.cameras.main.scrollY, max: this.cameras.main.scrollY + this.cameras.main.height}
+      });
+    }
+  }
+
+  updateNPCs(delta){
+    const isDay = GameState.dayTime > 0.2 && GameState.dayTime < 0.8;
+
+    GameState.villagers.forEach((v, i) => {
       if(!v.alive){
-        if(self.npcSprites[v.id]){
-          self.npcSprites[v.id].destroy();
-          delete self.npcSprites[v.id];
+        if(this.npcSprites[v.id]){
+          this.npcSprites[v.id].destroy();
+          delete this.npcSprites[v.id];
         }
         return;
       }
 
-      var spr = self.npcSprites[v.id];
+      const spr = this.npcSprites[v.id];
       if(!spr) return;
 
+      // Sick NPCs stay home
       if(v.sick){
-        var homeX = v.homeX * TILE_SIZE + TILE_SIZE/2;
-        var homeY = v.homeY * TILE_SIZE + TILE_SIZE/2;
+        const homeX = v.homeX * TILE_SIZE + TILE_SIZE/2;
+        const homeY = v.homeY * TILE_SIZE + TILE_SIZE/2;
         spr.x += (homeX - spr.x) * 0.05;
         spr.y += (homeY - spr.y) * 0.05;
         return;
@@ -373,23 +409,26 @@ class VillageScene extends Phaser.Scene {
       v.moveTimer -= delta;
       if(v.moveTimer <= 0){
         v.moveTimer = 2000 + Math.random() * 3000;
+
         if(isDay){
-          var angle = Math.random() * Math.PI * 2;
-          var dist = 50 + Math.random() * 100;
-          v.targetX = clamp(spr.x + Math.cos(angle)*dist, 50, self.mapW-50);
-          v.targetY = clamp(spr.y + Math.sin(angle)*dist, 50, self.mapH-50);
+          // Wander
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 50 + Math.random() * 100;
+          v.targetX = clamp(spr.x + Math.cos(angle)*dist, 50, this.mapWidth-50);
+          v.targetY = clamp(spr.y + Math.sin(angle)*dist, 50, this.mapHeight-50);
         } else {
+          // Go home
           v.targetX = v.homeX * TILE_SIZE + TILE_SIZE/2;
           v.targetY = v.homeY * TILE_SIZE + TILE_SIZE/2;
         }
       }
 
       if(v.targetX !== null){
-        var dx = v.targetX - spr.x;
-        var dy = v.targetY - spr.y;
-        var dist = Math.sqrt(dx*dx + dy*dy);
+        const dx = v.targetX - spr.x;
+        const dy = v.targetY - spr.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
         if(dist > 5){
-          var spd = 30;
+          const spd = 30;
           spr.body.setVelocity((dx/dist)*spd, (dy/dist)*spd);
         } else {
           spr.body.setVelocity(0);
@@ -398,65 +437,68 @@ class VillageScene extends Phaser.Scene {
         }
       }
 
+      // Update state position
       v.x = spr.x;
       v.y = spr.y;
     });
   }
 
   updateDisease(){
-    var self = this;
-    var sick = GameState.villagers.filter(function(v){ return v.alive && v.sick; });
-    var healthy = GameState.villagers.filter(function(v){ return v.alive && !v.sick; });
+    const sick = GameState.villagers.filter(v => v.alive && v.sick);
+    const healthy = GameState.villagers.filter(v => v.alive && !v.sick);
 
-    sick.forEach(function(v){
-      var disease = DISEASES.find(function(d){ return d.name === v.sick; });
+    sick.forEach(v => {
+      const disease = DISEASES.find(d => d.name === v.sick);
       if(!disease) return;
 
-      healthy.forEach(function(h){
-        var dx = v.x - h.x;
-        var dy = v.y - h.y;
-        var dist = Math.sqrt(dx*dx + dy*dy);
+      // Spread to nearby healthy
+      healthy.forEach(h => {
+        const dx = v.x - h.x;
+        const dy = v.y - h.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
         if(dist < 80 && Math.random() < disease.spreadRate){
           h.sick = v.sick;
           h.sickDays = disease.duration;
-          if(self.npcSprites[h.id]) self.npcSprites[h.id].setTint(0xFF6666);
-          self.notify(h.name + ' has caught ' + v.sick + '!');
+          if(this.npcSprites[h.id]) this.npcSprites[h.id].setTint(0xFF6666);
+          this.notify(h.name+' has caught '+v.sick+'!');
         }
       });
 
       v.sickDays--;
       if(v.sickDays <= 0){
         v.sick = null;
-        if(self.npcSprites[v.id]) self.npcSprites[v.id].clearTint();
+        if(this.npcSprites[v.id]) this.npcSprites[v.id].clearTint();
       }
     });
   }
 
   checkInteraction(){
-    var near = null;
-    var nearDist = 60;
-    var self = this;
+    let near = null;
+    let nearDist = 60;
 
-    Object.values(this.npcSprites).forEach(function(spr){
-      var d = Phaser.Math.Distance.Between(self.player.x, self.player.y, spr.x, spr.y);
+    // Check NPCs
+    Object.values(this.npcSprites).forEach(spr => {
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, spr.x, spr.y);
       if(d < nearDist){
         nearDist = d;
         near = {type:'npc', target:spr};
       }
     });
 
-    this.buildingGroup.getChildren().forEach(function(bld){
-      var d = Phaser.Math.Distance.Between(self.player.x, self.player.y, bld.x, bld.y);
+    // Check buildings
+    this.buildings.getChildren().forEach(bld => {
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, bld.x, bld.y);
       if(d < nearDist + 20){
         nearDist = d;
         near = {type:'building', target:bld};
       }
     });
 
-    GameState.farmPlots.forEach(function(plot, idx){
-      var px = plot.x * TILE_SIZE + 16;
-      var py = plot.y * TILE_SIZE + 16;
-      var d = Phaser.Math.Distance.Between(self.player.x, self.player.y, px, py);
+    // Check farm plots
+    GameState.farmPlots.forEach((plot, idx) => {
+      const px = plot.x * TILE_SIZE + 16;
+      const py = plot.y * TILE_SIZE + 16;
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, px, py);
       if(d < 50){
         near = {type:'farm', plot:plot, idx:idx};
       }
@@ -466,17 +508,17 @@ class VillageScene extends Phaser.Scene {
 
     if(near){
       this.promptText.setPosition(this.player.x, this.player.y - 30);
-      var label = '[E] Interact';
+      let label = '[E] Interact';
       if(near.type === 'farm'){
-        if(!near.plot.crop) label = '[E] Plant ' + CROPS[GameState.selectedCrop].name;
+        if(!near.plot.crop) label = '[E] Plant '+GameState.selectedCrop;
         else if(near.plot.growth >= 1) label = '[E] Harvest';
-        else label = '[E] Check crop (' + Math.floor(near.plot.growth*100) + '%)';
+        else label = '[E] Check crop';
       } else if(near.type === 'building'){
-        var b = near.target.getData('building');
-        if(b) label = '[E] Enter ' + b.name;
+        const b = near.target.getData('building');
+        if(b) label = '[E] Enter '+b.name;
       } else if(near.type === 'npc'){
-        var v = near.target.getData('villager');
-        if(v) label = '[E] Talk to ' + v.name;
+        const v = near.target.getData('villager');
+        if(v) label = '[E] Talk to '+v.name;
       }
       this.promptText.setText(label);
       this.promptText.setVisible(true);
@@ -487,14 +529,15 @@ class VillageScene extends Phaser.Scene {
 
   tryInteract(){
     if(!this.nearby) return;
-    var near = this.nearby;
+
+    const near = this.nearby;
 
     if(near.type === 'npc'){
-      var v = near.target.getData('villager');
+      const v = near.target.getData('villager');
       if(v) this.talkToNPC(v);
     }
     else if(near.type === 'building'){
-      var b = near.target.getData('building');
+      const b = near.target.getData('building');
       if(b) this.enterBuilding(b);
     }
     else if(near.type === 'farm'){
@@ -503,80 +546,80 @@ class VillageScene extends Phaser.Scene {
   }
 
   talkToNPC(villager){
-    var text = villager.dialogue;
+    let text = villager.dialogue;
     if(villager.sick) text = '*cough* I\'m not well... ' + text;
     if(villager.age > 60) text = 'At my age, ' + text.toLowerCase();
 
-    var self = this;
-    this.ui.showDialogue(villager.name, text, function(){
+    this.uiScene.showDialogue(villager.name, text, () => {
+      // Optional: quest-like interactions based on year
       if(villager.role === 'healer' && GameState.year === 1850){
-        self.ui.showDialogue(villager.name,
-          'Cholera is in the parish. We must boil all water and keep the sick apart. Will you help?',
-          function(){ GameState.health = clamp(GameState.health+10,0,100); self.notify('Health measures enacted!'); }
+        this.uiScene.showDialogue(villager.name, 
+          'Cholera is in the parish. We must boil all water and keep the sick apart. Will you help?', 
+          () => { GameState.health = clamp(GameState.health+10,0,100); this.notify('Health measures enacted!'); }
         );
       }
       else if(villager.role === 'trader' && GameState.year === 1870){
-        self.ui.showDialogue(villager.name,
+        this.uiScene.showDialogue(villager.name,
           'Six acres at ninety bunches each, two shillings a bunch. That\'s 1,080 shillings if we size it right.',
-          function(){ GameState.treasury += 15; self.notify('Trade knowledge gained! +15s'); }
+          () => { GameState.treasury += 15; this.notify('Trade knowledge gained! +15s'); }
         );
       }
     });
   }
 
   enterBuilding(bld){
-    var self = this;
     if(bld.label === 'Hall'){
-      this.ui.showDialogue('Village Hall',
+      this.uiScene.showDialogue('Village Hall', 
         'The council meets here. You may hold court, settle disputes, or end the year and resolve the harvest.',
-        function(){
-          self.ui.showChoice('What would you like to do?', [
-            {label:'End the Year ('+GameState.year+')', action:function(){ self.triggerYearEnd(); }},
-            {label:'Change Primary Crop', action:function(){ self.showCropMenu(); }},
-            {label:'Leave', action:function(){}}
+        () => {
+          this.uiScene.showChoice('What would you like to do?', [
+            {label:'End the Year ('+GameState.year+')', action:()=>this.triggerYearEnd()},
+            {label:'Change Primary Crop', action:()=>this.showCropMenu()},
+            {label:'Leave', action:()=>{}}
           ]);
         }
       );
     }
     else if(bld.label === 'Church'){
-      this.ui.showDialogue('Church',
+      this.uiScene.showDialogue('Church', 
         'The congregation gathers for worship. Morale rises in hard times when faith is strong.',
-        function(){ GameState.morale = clamp(GameState.morale+3,0,100); self.notify('Morale +3'); }
+        () => { GameState.morale = clamp(GameState.morale+3,0,100); this.notify('Morale +3'); }
       );
     }
     else if(bld.label === 'School'){
-      this.ui.showDialogue('School',
+      this.uiScene.showDialogue('School', 
         'Children learn their letters here. Literacy grows slowly, but it changes everything.',
-        function(){ GameState.literacy = clamp(GameState.literacy+2,0,100); self.notify('Literacy +2'); }
+        () => { GameState.literacy = clamp(GameState.literacy+2,0,100); this.notify('Literacy +2'); }
       );
     }
     else if(bld.label === 'Market'){
-      this.ui.showDialogue('Market',
+      this.uiScene.showDialogue('Market', 
         'Traders from neighboring parishes gather here. Sell surplus food for shillings.',
-        function(){
+        () => {
           if(GameState.food >= 20){
             GameState.food -= 20;
-            var gain = 8 + Math.floor(Math.random()*12);
+            const gain = 8 + Math.floor(Math.random()*12);
             GameState.treasury += gain;
-            self.notify('Sold surplus for ' + gain + ' shillings');
+            this.notify('Sold surplus for '+gain+' shillings');
           } else {
-            self.notify('Not enough food to sell (need 20)');
+            this.notify('Not enough food to sell (need 20)');
           }
         }
       );
     }
     else if(bld.label === 'Healer'){
-      this.ui.showDialogue('Healer\'s Hut',
+      this.uiScene.showDialogue('Healer\'s Hut', 
         'Joseph tends the sick with fever grass and moringa. The herbs ease suffering, though they cannot cure everything.',
-        function(){
-          var sick = GameState.villagers.find(function(v){ return v.alive && v.sick; });
+        () => {
+          // Cure one sick villager
+          const sick = GameState.villagers.find(v => v.alive && v.sick);
           if(sick){
             sick.sick = null;
             sick.sickDays = 0;
-            if(self.npcSprites[sick.id]) self.npcSprites[sick.id].clearTint();
-            self.notify(sick.name + ' has been treated!');
+            if(this.npcSprites[sick.id]) this.npcSprites[sick.id].clearTint();
+            this.notify(sick.name+' has been treated!');
           } else {
-            self.notify('No one is sick right now.');
+            this.notify('No one is sick right now.');
           }
         }
       );
@@ -585,75 +628,80 @@ class VillageScene extends Phaser.Scene {
 
   interactFarm(plot, idx){
     if(!plot.crop){
+      // Plant
       plot.crop = GameState.selectedCrop;
       plot.growth = 0;
       plot.plantedDay = GameState.day;
-      var spr = this.add.sprite(plot.x*TILE_SIZE+16, plot.y*TILE_SIZE+16, 'crop0');
+
+      const spr = this.add.sprite(plot.x*TILE_SIZE+16, plot.y*TILE_SIZE+16, 'crop0');
       spr.setDepth(3);
       this.farmSprites[idx] = spr;
-      this.notify('Planted ' + CROPS[GameState.selectedCrop].name);
+      this.notify('Planted '+CROPS[GameState.selectedCrop].name);
     }
     else if(plot.growth >= 1){
-      var crop = CROPS[plot.crop];
-      var yieldAmt = Math.floor(5 * crop.value * (GameState.soilQuality/100));
+      // Harvest
+      const crop = CROPS[plot.crop];
+      const yieldAmt = Math.floor(5 * crop.value * (GameState.soilQuality/100));
       GameState.food += yieldAmt;
-      if(this.farmSprites[idx]){
-        this.farmSprites[idx].destroy();
-        delete this.farmSprites[idx];
-      }
+
+      this.farmSprites[idx].destroy();
+      delete this.farmSprites[idx];
       plot.crop = null;
       plot.growth = 0;
-      this.notify('Harvested ' + yieldAmt + ' food!');
+
+      this.notify('Harvested '+yieldAmt+' food!');
     }
     else {
-      var pct = Math.floor(plot.growth * 100);
-      this.notify('Growing... ' + pct + '% (weather affects speed)');
+      // Check status
+      const pct = Math.floor(plot.growth * 100);
+      this.notify('Growing... '+pct+'% (needs rain in dry weather)');
     }
   }
 
   showCropMenu(){
-    var self = this;
-    var choices = Object.keys(CROPS).map(function(key){
-      var c = CROPS[key];
-      return {
-        label: c.name + (key === GameState.selectedCrop ? ' (current)' : ''),
-        action: function(){ GameState.selectedCrop = key; self.notify('Primary crop: ' + c.name); }
-      };
-    });
-    choices.push({label:'Cancel', action:function(){}});
-    this.ui.showChoice('Select primary crop for next season:', choices);
+    const choices = Object.entries(CROPS).map(([key,c]) => ({
+      label: c.name + (key===GameState.selectedCrop?' (current)':''),
+      action:()=>{ GameState.selectedCrop = key; this.notify('Primary crop: '+c.name); }
+    }));
+    choices.push({label:'Cancel', action:()=>{}});
+    this.uiScene.showChoice('Select primary crop for next season:', choices);
   }
 
   triggerYearEnd(){
     this.yearEndActive = true;
     this.player.body.setVelocity(0);
 
-    var result = GameState.resolveYear();
+    // Resolve the year
+    const result = GameState.resolveYear();
 
-    var summary = 'Year ' + GameState.year + ' has ended.\n\n';
-    summary += 'Harvest: ' + Math.round(result.farmYield) + ' food\n';
-    summary += 'Population: ' + GameState.population + '\n';
-    summary += 'Treasury: ' + Math.round(GameState.treasury) + 's\n';
-    summary += 'Health: ' + Math.round(GameState.health) + '\n';
-    summary += 'Morale: ' + Math.round(GameState.morale) + '\n';
+    // Show summary
+    let summary = 'Year '+GameState.year+' has ended.\n\n';
+    summary += 'Harvest: '+Math.round(result.farmYield)+' food\n';
+    summary += 'Population: '+GameState.population+'\n';
+    summary += 'Treasury: '+Math.round(GameState.treasury)+'s\n';
+    summary += 'Health: '+Math.round(GameState.health)+'\n';
+    summary += 'Morale: '+Math.round(GameState.morale)+'\n';
     if(result.deficit) summary += '\n⚠ The village went hungry this year.';
 
-    var self = this;
-    this.ui.showDialogue('Year End — ' + GameState.village, summary, function(){
+    this.uiScene.showDialogue('Year End — '+GameState.village, summary, () => {
       GameState.year++;
       GameState.day = 1;
       GameState.dayTime = 0.3;
 
       if(GameState.year > 1900){
-        self.showEndGame();
-      } else if(GameState.population <= 8){
-        self.showGameOver();
+        this.showEndGame();
       } else {
-        if(GameState.scriptedEvent){
-          self.showEvent(GameState.scriptedEvent);
+        // Check for game over
+        if(GameState.population <= 8){
+          this.showGameOver();
+        } else {
+          // Check scripted event
+          if(GameState.scriptedEvent){
+            this.showEvent(GameState.scriptedEvent);
+          }
+          this.yearEndActive = false;
+          this.notify('Year '+GameState.year+' begins');
         }
-        self.yearEndActive = false;
-        self.notify('Year ' + GameState.year + ' begins');
       }
     });
 
@@ -662,53 +710,50 @@ class VillageScene extends Phaser.Scene {
 
   showEvent(ev){
     this.yearEndActive = true;
-    var self = this;
-    this.ui.showDialogue(ev.title + ' (' + GameState.year + ')', ev.text, function(){
-      self.yearEndActive = false;
+    this.uiScene.showDialogue(ev.title + ' ('+GameState.year+')', ev.text, () => {
+      this.yearEndActive = false;
     });
   }
 
   showEndGame(){
-    var alive = GameState.villagers.filter(function(v){ return v.alive; });
-    var checks = [
-      {label:'Literacy above 70%', pass: GameState.literacy >= 70},
-      {label:'Food security (12+ years)', pass: GameState.foodSecureStreak >= 12},
-      {label:'Land ownership (40%+)', pass: GameState.land >= 40},
-      {label:'Positive treasury', pass: GameState.treasury > 0},
-      {label:'Health above 60', pass: GameState.health >= 60},
-      {label:'Culture preserved', pass: GameState.cultureScore >= 40}
+    const alive = GameState.villagers.filter(v => v.alive);
+    const checks = [
+      {label:'Literacy above 70%', pass: GameState.literacy>=70},
+      {label:'Food security (12+ years)', pass: GameState.foodSecureStreak>=12},
+      {label:'Land ownership (40%+)', pass: GameState.land>=40},
+      {label:'Positive treasury', pass: GameState.treasury>0},
+      {label:'Health above 60', pass: GameState.health>=60},
+      {label:'Culture preserved', pass: GameState.cultureScore>=40}
     ];
-    var passed = checks.filter(function(c){ return c.pass; }).length;
-    var victory = passed >= 4;
+    const passed = checks.filter(c=>c.pass).length;
+    const victory = passed >= 4;
 
-    var text = victory
+    let text = victory 
       ? 'The village stands as a genuine success — built generation by generation.'
       : 'The village survived, though not every goal was reached.';
-    text += '\n\n' + passed + ' of 6 goals achieved.\n\n';
-    text += 'Survivors: ' + alive.map(function(v){ return v.name; }).join(', ');
+    text += '\n\n'+passed+' of 6 goals achieved.\n\n';
+    text += 'Survivors: '+alive.map(v=>v.name).join(', ');
 
-    var self = this;
-    this.ui.showDialogue('1900 — The Century Turns', text, function(){
-      self.ui.showChoice('Play again?', [
-        {label:'New Village', action:function(){ GameState.clearSave(); location.reload(); }},
-        {label:'Keep Exploring', action:function(){ self.yearEndActive = false; }}
+    this.uiScene.showDialogue('1900 — The Century Turns', text, () => {
+      this.uiScene.showChoice('Play again?', [
+        {label:'New Village', action:()=>{ GameState.clearSave(); location.reload(); }},
+        {label:'Keep Exploring', action:()=>{ this.yearEndActive = false; }}
       ]);
     });
   }
 
   showGameOver(){
-    var self = this;
-    this.ui.showDialogue('The Village Could Not Go On',
+    this.uiScene.showDialogue('The Village Could Not Go On', 
       'Population fell too low to sustain the settlement. Sometimes the land, weather, or wrong choices are simply too much.\n\nEvery village that fails teaches the next one something.',
-      function(){
-        self.ui.showChoice('Try again?', [
-          {label:'Found a New Village', action:function(){ GameState.clearSave(); location.reload(); }}
+      () => {
+        this.uiScene.showChoice('Try again?', [
+          {label:'Found a New Village', action:()=>{ GameState.clearSave(); location.reload(); }}
         ]);
       }
     );
   }
 
   notify(text){
-    this.ui.showNotification(text);
+    this.uiScene.showNotification(text);
   }
 }
