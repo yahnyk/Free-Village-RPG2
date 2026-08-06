@@ -1,0 +1,17 @@
+body {
+  margin: 0;
+  padding: 0;
+  background: #0a1f1a;
+  overflow: hidden;
+  font-family: Georgia, serif;
+}
+#game-container {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+#game-container canvas {
+  box-shadow: 0 0 40px rgba(0,0,0,0.6);
+}
