@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Free Village — A Jamaican Free Village RPG</title>
+<style>
+:root{--ink:#24180f;--paper:#f4ead2;--green:#315c3b;--gold:#d49b3a;--red:#8b3e2f}
+*{box-sizing:border-box} body{margin:0;background:#171b18;color:var(--paper);font-family:Georgia,serif;overflow:hidden}
+#wrap{height:100vh;display:flex;flex-direction:column;background:linear-gradient(#17231d,#0f1512)}
+#top{height:58px;display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:#21170f;border-bottom:2px solid #8d6938;z-index:3}
+#title{font-size:20px;font-weight:bold;letter-spacing:.5px} #year{font-size:14px;color:#e7c77d}
+#stats{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.stat{padding:5px 8px;border:1px solid #6f5734;background:#312318;border-radius:6px;font:13px Arial;color:#f7e8c5}
+#game{position:relative;flex:1;min-height:0}canvas{display:block;width:100%;height:100%;image-rendering:auto}
+#panel{position:absolute;right:14px;top:14px;width:285px;max-width:calc(100% - 28px);background:rgba(32,23,15,.94);border:1px solid #9b7944;border-radius:10px;box-shadow:0 8px 30px #0008;padding:14px;display:none;z-index:4}
+#panel h2{margin:0 0 8px;font-size:20px;color:#f0ce7e} #panel p{font-size:14px;line-height:1.45;margin:7px 0}
+button{border:1px solid #b48645;background:#674824;color:#fff3d2;padding:8px 10px;border-radius:6px;cursor:pointer;font-family:inherit;margin:3px 3px 0 0}
+button:hover{background:#815d2d}.close{float:right;background:#3d2a1c}
+#message{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(720px,calc(100% - 30px));background:rgba(29,20,13,.93);border:1px solid #9b7944;border-radius:9px;padding:10px 14px;text-align:center;font-size:14px;z-index:3;pointer-events:none}
+#help{position:absolute;left:14px;top:14px;background:#21170fdd;border:1px solid #80663c;border-radius:8px;padding:9px 11px;font:12px Arial;z-index:2}
+#start{position:absolute;inset:0;background:radial-gradient(circle at 50% 35%,#665331,#19140f 65%);display:flex;align-items:center;justify-content:center;z-index:10}
+.card{width:min(650px,92vw);padding:30px;background:#eee1c3;color:#281b10;border:4px solid #76552d;box-shadow:0 20px 70px #000b;text-align:center;border-radius:4px}
+.card h1{font-size:42px;margin:0 0 6px}.card h3{margin:5px 0 20px;color:#6d4922}.card p{text-align:left;line-height:1.55}.card button{font-size:18px;padding:12px 24px;background:#315c3b;border-color:#1d3c25}
+#touch{display:none;position:absolute;bottom:62px;left:14px;z-index:5}.pad{display:grid;grid-template-columns:45px 45px 45px;gap:4px}.pad button{height:40px;margin:0;background:#21170fcc}
+@media(max-width:700px){#top{height:auto;min-height:58px;align-items:flex-start}.stat{font-size:11px;padding:4px}.title{font-size:16px}#help{display:none}#touch{display:block}.card h1{font-size:31px}}
+</style>
+</head>
+<body>
+<div id="wrap">
+<header id="top"><div id="title">🌿 FREE VILLAGE <span id="year">1838</span></div><div id="stats"></div></header>
+<div id="game">
+<canvas id="c"></canvas>
+<div id="help">WASD / Arrow Keys: move · E: interact · Space: harvest · M: map</div>
+<div id="message">Your story begins...</div>
+<div id="panel"></div>
+<div id="touch"><div class="pad"><span></span><button data-k="up">▲</button><span></span><button data-k="left">◀</button><button data-k="down">▼</button><button data-k="right">▶</button></div></div>
+<div id="start"><div class="card">
+<h1>FREE VILLAGE</h1><h3>Jamaica, 1838 — Freedom Is Only the Beginning</h3>
+<p>You are a newly emancipated Jamaican building a life beyond the plantation. Buy or work land, grow provisions, trade in the village, form community, learn your rights, and help establish a free village.</p>
+<p><b>This is a small playable prototype.</b> It uses original pixel-art-style shapes rather than external assets, so it can run as a single file on GitHub Pages.</p>
+<button id="begin">BEGIN YOUR JOURNEY</button>
+</div></div>
+</div></div>
+<script>
+"use strict";
+const canvas=document.getElementById("c"),ctx=canvas.getContext("2d"),stats=document.getElementById("stats"),msg=document.getElementById("message"),panel=document.getElementById("panel"),yearEl=document.getElementById("year");
+let W,H,scale=1;
+function resize(){W=canvas.clientWidth;H=canvas.clientHeight;canvas.width=W*devicePixelRatio;canvas.height=H*devicePixelRatio;ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0)}
+addEventListener("resize",resize);resize();
+
+const TILE=48, MAPW=30, MAPH=22;
+const map=Array.from({length:MAPH},(_,y)=>Array.from({length:MAPW},(_,x)=>{
+ if(x<2||y<2||x>27||y>19)return "water";
+ let r=Math.random(); return r<.12?"tree":r<.20?"grass": "ground";
+}));
+for(let y=8;y<11;y++)for(let x=3;x<27;x++)map[y][x]="road";
+for(let y=3;y<18;y++)map[y][14]="road";
+const objects=[
+ {x:14,y:5,type:"meeting",name:"Village Meeting House",icon:"▰"},
+ {x:7,y:8,type:"market",name:"Village Market",icon:"▰"},
+ {x:21,y:8,type:"shop",name:"Provision Shop",icon:"▰"},
+ {x:5,y:14,type:"church",name:"Village Chapel",icon:"▰"},
+ {x:22,y:14,type:"estate",name:"Old Plantation",icon:"▰"},
+ {x:18,y:16,type:"farm",name:"Your Small Holding",icon:"▰"}
+];
+const state={started:false,x:11,y:12,camX:0,camY:0,money:18,food:5,wood:0,seeds:3,land:1,health:100,year:1838,rep:0,harvests:0,visited:{},history:[],message:""};
+let keys={};
+addEventListener("keydown",e=>{keys[e.key.toLowerCase()]=true;if(["arrowup","arrowdown","arrowleft","arrowright"," "].includes(e.key.toLowerCase()))e.preventDefault();if(e.key.toLowerCase()==="e")interact();if(e.key===" "){harvest();}});
+addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
+document.querySelectorAll("#touch button").forEach(b=>{let k=b.dataset.k;let mapk={up:"arrowup",down:"arrowdown",left:"arrowleft",right:"arrowright"}[k];b.addEventListener("touchstart",e=>{e.preventDefault();keys[mapk]=true});b.addEventListener("touchend",()=>keys[mapk]=false)});
+function say(t){msg.textContent=t;state.message=t}
+function tileBlocked(x,y){if(x<2||y<2||x>=MAPW-2||y>=MAPH-2)return true;return map[y][x]==="water"||map[y][x]==="tree"}
+function objAt(x,y){return objects.find(o=>o.x===x&&o.y===y)}
+function nearObject(){return objects.find(o=>Math.abs(o.x-state.x)+Math.abs(o.y-state.y)<=1)}
+function move(dx,dy){let nx=state.x+dx,ny=state.y+dy;if(!tileBlocked(nx,ny)&&!objAt(nx,ny)){state.x=nx;state.y=ny}}
+function interact(){
+ let o=nearObject();if(!o){say("Nothing here to interact with. Explore the village.");return}
+ if(o.type==="market"){panelOpen("Village Market",`Neighbours trade here. You have ${state.money} shillings and ${state.food} food.`,[
+  ["Sell 1 food","Sell one food for 2 shillings.",()=>{if(state.food>0){state.food--;state.money+=2;say("You sold food at the market.");update() }else say("You have no food to sell.")}],
+  ["Buy seeds (3s)","Buy seeds for your holding.",()=>{if(state.money>=3){state.money-=3;state.seeds++;say("You bought seeds.");update()}else say("You need 3 shillings.")}],
+  ["Close","",closePanel]])}
+ if(o.type==="shop"){panelOpen("Provision Shop","A small shop serving the growing free community.",[
+  ["Buy food (4s)","",()=>{if(state.money>=4){state.money-=4;state.food+=3;say("You bought provisions.");update()}else say("You need 4 shillings.")}],
+  ["Buy wood (2s)","",()=>{if(state.money>=2){state.money-=2;state.wood++;say("You bought building wood.");update()}else say("You need 2 shillings.")}],
+  ["Close","",closePanel]])}
+ if(o.type==="farm"){panelOpen("Your Small Holding","This is the foundation of your independent life. Harvest when standing here.",[
+  ["Plant a crop (1 seed)","",()=>{if(state.seeds>0){state.seeds--;state.visited.farm=true;say("You plant provisions. Return later to harvest.");update()}else say("You need a seed.")}],
+  ["Harvest","",harvest],["Close","",closePanel]])}
+ if(o.type==="meeting"){panelOpen("Village Meeting House","Here the community debates land, labour, schooling and collective action.",[
+  ["Attend meeting","Learn about the free village movement.",()=>{state.rep+=2;state.year++;state.history.push("Attended a village meeting.");say("You argued that freedom must include land, community and self-determination.");update();closePanel()}],
+  ["Close","",closePanel]])}
+ if(o.type==="church"){panelOpen("Village Chapel","A place of worship, education and community gathering.",[
+  ["Study & teach","Spend time helping the community learn.",()=>{state.rep++;state.food=Math.max(0,state.food-1);say("You helped teach reading and community history.");update();closePanel()}],
+  ["Close","",closePanel]])}
+ if(o.type==="estate"){panelOpen("Old Plantation","The old order still casts a long shadow. You can work here for wages, but your goal is independence.",[
+  ["Work a day (+6s)","Lose 1 food; gain wages.",()=>{if(state.food>0){state.food--;state.money+=6;state.rep=Math.max(-5,state.rep-1);say("You worked for wages, but independence remains the goal.");update();closePanel()}else say("You need food for the day's work.")}],
+  ["Close","",closePanel]])}
+}
+function harvest(){if(!state.started)return;if(Math.abs(state.x-18)+Math.abs(state.y-16)<=1&&state.visited.farm){state.food+=4;state.harvests++;state.money+=1;state.visited.farm=false;state.rep++;say("Harvest gathered! +4 food, +1 shilling, +1 community reputation.");update()}}
+function panelOpen(title,text,buttons){panel.style.display="block";panel.innerHTML=`<button class="close" id="x">×</button><h2>${title}</h2><p>${text}</p>`+buttons.map((b,i)=>`<button data-i="${i}">${b[0]}</button>`).join("");panel.querySelector("#x").onclick=closePanel;panel.querySelectorAll("button[data-i]").forEach((b,i)=>b.onclick=buttons[i][2])}
+function closePanel(){panel.style.display="none"}
+function update(){
+ stats.innerHTML=`<span class="stat">💰 ${state.money}s</span><span class="stat">🌽 ${state.food}</span><span class="stat">🌱 ${state.seeds}</span><span class="stat">🪵 ${state.wood}</span><span class="stat">🤝 Rep ${state.rep}</span>`;
+ yearEl.textContent=state.year;
+}
+document.getElementById("begin").onclick=()=>{state.started=true;document.getElementById("start").style.display="none";say("Find the meeting house, market and your small holding. Build a life.");update()};
+
+let last=0,acc=0;
+function loop(t){let dt=Math.min(.05,(t-last)/1000||0);last=t;acc+=dt;if(state.started&&panel.style.display!=="block"&&acc>.11){acc=0;let dx=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0),dy=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);if(dx||dy)move(Math.sign(dx),Math.sign(dy))}draw();requestAnimationFrame(loop)}
+function draw(){
+ let viewW=Math.ceil(W/TILE)+3,viewH=Math.ceil(H/TILE)+3;
+ state.camX=Math.max(0,Math.min(MAPW-viewW,state.x-Math.floor(viewW/2)));
+ state.camY=Math.max(0,Math.min(MAPH-viewH,state.y-Math.floor(viewH/2)));
+ ctx.clearRect(0,0,W,H);
+ for(let y=state.camY;y<Math.min(MAPH,state.camY+viewH);y++)for(let x=state.camX;x<Math.min(MAPW,state.camX+viewW);x++){
+  let px=(x-state.camX)*TILE,py=(y-state.camY)*TILE,t=map[y][x];
+  ctx.fillStyle=t==="water"?"#315b67":t==="tree"?"#31553a":t==="grass"?"#71894c":"#9c8357";ctx.fillRect(px,py,TILE+1,TILE+1);
+  if(t==="water"){ctx.strokeStyle="#5d8890";ctx.beginPath();ctx.moveTo(px+5,py+25);ctx.lineTo(px+35,py+25);ctx.stroke()}
+  if(t==="tree"){ctx.fillStyle="#5b3d25";ctx.fillRect(px+21,py+25,7,18);ctx.fillStyle="#24462f";ctx.beginPath();ctx.arc(px+24,py+20,17,0,7);ctx.fill()}
+  if(t==="grass"){ctx.strokeStyle="#879d5c";ctx.beginPath();ctx.moveTo(px+12,py+40);ctx.lineTo(px+15,py+30);ctx.moveTo(px+30,py+44);ctx.lineTo(px+32,py+33);ctx.stroke()}
+ }
+ objects.forEach(o=>{let px=(o.x-state.camX)*TILE,py=(o.y-state.camY)*TILE;if(px<-60||py<-60||px>W+60||py>H+60)return;
+  ctx.fillStyle="#3a281c";ctx.fillRect(px+5,py+10,38,31);ctx.fillStyle=o.type==="church"?"#ddd1b5":o.type==="estate"?"#8d5e39":"#b77b4a";ctx.fillRect(px+8,py+14,32,27);ctx.fillStyle="#5b2d22";ctx.beginPath();ctx.moveTo(px+3,py+15);ctx.lineTo(px+24,py-2);ctx.lineTo(px+45,py+15);ctx.fill();ctx.fillStyle="#ead9ad";ctx.font="bold 10px Arial";ctx.textAlign="center";ctx.fillText(o.name,px+24,py+55)});
+ let px=(state.x-state.camX)*TILE+24,py=(state.y-state.camY)*TILE+24;
+ ctx.fillStyle="#20140d";ctx.beginPath();ctx.arc(px,py,14,0,7);ctx.fill();ctx.fillStyle="#9b6b45";ctx.beginPath();ctx.arc(px,py-8,9,0,7);ctx.fill();ctx.fillStyle="#33251b";ctx.fillRect(px-8,py+2,16,15);ctx.fillStyle="#f0d4a2";ctx.fillRect(px-5,py-10,3,3);ctx.fillRect(px+3,py-10,3,3);
+ if(state.started&&nearObject()) {ctx.fillStyle="#fff3c2";ctx.font="bold 13px Arial";ctx.textAlign="center";ctx.fillText("E",px,py-28)}
+}
+requestAnimationFrame(loop);update();
+</script>
+</body>
+</html>
